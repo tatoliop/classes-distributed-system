@@ -1,0 +1,46 @@
+version: "3.1"
+
+services:
+
+  # Message bus
+  kafka:
+    image: confluentinc/cp-kafka:6.2.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: '${SERVER1}:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${SERVER2}:29092,PLAINTEXT_HOST://${SERVER2}:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+    
+  # Flink worker  
+  taskmanager:
+    image: flink:1.20.0-scala_2.12
+    ports:
+      - "50100:50100"
+      - "6121:6121"
+      - "6122:6122"
+    command: taskmanager
+    scale: 1
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: ${SERVER1}
+        taskmanager.host: ${SERVER2}
+        taskmanager.rpc.port: 50100
+        taskmanager.data.port: 6121
+        blob.server.port: 6122
+        taskmanager.numberOfTaskSlots: 2
+    env_file:
+      - .env
+        

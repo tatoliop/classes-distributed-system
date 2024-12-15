@@ -1,0 +1,208 @@
+version: "3.1"
+
+volumes:
+  metadata_data: {}
+  middle_var: {}
+  historical_var: {}
+  broker_var: {}
+  coordinator_var: {}
+  router_var: {}
+  druid_shared: {}
+
+services:
+
+  # Coordinator
+  zookeeper:
+    image: confluentinc/cp-zookeeper:6.2.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+  
+  # Message bus
+  kafka:
+    image: confluentinc/cp-kafka:6.2.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${SERVER1}:29092,PLAINTEXT_HOST://${SERVER1}:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+    depends_on:
+      - zookeeper
+      
+  # Visualize kafka
+  kafdrop:
+    image: obsidiandynamics/kafdrop:4.0.2
+    hostname: kafdrop
+    container_name: kafdrop
+    ports:
+      - "9007:9000"
+    environment:
+      KAFKA_BROKERCONNECT: "${SERVER1}:29092"
+      JVM_OPTS: "-Xms32M -Xmx64M"
+      SERVER_SERVLET_CONTEXTPATH: "/"
+    depends_on:
+      - kafka
+      
+  # Flink coordinator
+  jobmanager:
+    image: flink:1.20.0-scala_2.12
+    ports:
+      - "8081:8081"
+      - "6123:6123"
+      - "6124:6124"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: ${SERVER1}
+        blob.server.port: 6124
+    env_file:
+      - .env
+  
+  # Flink worker
+  taskmanager:
+    image: flink:1.20.0-scala_2.12
+    ports:
+      - "50100:50100"
+      - "6121:6121"
+      - "6122:6122"
+    depends_on:
+      - jobmanager
+    command: taskmanager
+    scale: 1
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: ${SERVER1}
+        taskmanager.host: ${SERVER1}
+        taskmanager.rpc.port: 50100
+        taskmanager.data.port: 6121
+        blob.server.port: 6122
+        taskmanager.numberOfTaskSlots: 2
+    env_file:
+      - .env
+        
+  # Metadata store for Druid
+  postgres:
+    image: postgres:12.22
+    container_name: postgres
+    #ports:
+    #  - "5432:5432"
+    volumes:
+      - metadata_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=FoolishPassword
+      - POSTGRES_USER=druid
+      - POSTGRES_DB=druid
+
+  # Druid coordinator
+  coordinator:
+    image: apache/druid:31.0.0
+    container_name: coordinator
+    volumes:
+      - druid_shared:/opt/shared
+      - coordinator_var:/opt/druid/var
+    depends_on:
+      - zookeeper
+      - postgres
+    #ports:
+    #  - "8081:8081"
+    command:
+      - coordinator
+    env_file:
+      - .env
+
+  # Druid broker
+  broker:
+    image: apache/druid:31.0.0
+    container_name: broker
+    volumes:
+      - broker_var:/opt/druid/var
+    depends_on:
+      - zookeeper
+      - postgres
+      - coordinator
+    #ports:
+    #  - "8082:8082"
+    command:
+      - broker
+    env_file:
+      - .env
+
+  # Druid historical server
+  historical:
+    image: apache/druid:31.0.0
+    container_name: historical
+    volumes:
+      - druid_shared:/opt/shared
+      - historical_var:/opt/druid/var
+    depends_on: 
+      - zookeeper
+      - postgres
+      - coordinator
+    #ports:
+    #  - "8083:8083"
+    command:
+      - historical
+    env_file:
+      - .env
+
+  # Druid middlemanager
+  middlemanager:
+    image: apache/druid:31.0.0
+    container_name: middlemanager
+    volumes:
+      - druid_shared:/opt/shared
+      - middle_var:/opt/druid/var
+    depends_on: 
+      - zookeeper
+      - postgres
+      - coordinator
+    #ports:
+    #  - "8091:8091"
+    #  - "8100-8105:8100-8105"
+    command:
+      - middleManager
+    env_file:
+      - .env
+
+  # Druid router
+  router:
+    image: apache/druid:31.0.0
+    container_name: router
+    volumes:
+      - router_var:/opt/druid/var
+    depends_on:
+      - zookeeper
+      - postgres
+      - coordinator
+    ports:
+      - "8808:8888"
+    command:
+      - router
+    env_file:
+      - .env
+
+  # Visualization tool
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: example
+    ports:
+      - "3003:3000"
